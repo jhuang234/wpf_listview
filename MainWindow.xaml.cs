@@ -91,16 +91,30 @@ namespace WpfApp1
             {
                 // Note that you can have more than one file.
                 var files = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop);
-                //Debug.WriteLine("Got Files");
+                long ticks = DateTime.Now.Ticks;
+                int counter = 0;
+
                 foreach (var file in files)
                 {
-                    //Debug.WriteLine($"  File={file}");
-                    LogEntries.Add(new LogEntry
+                    string previousLine = "";
+
+                    foreach (string line in System.IO.File.ReadLines(file))
                     {
-                        Timestamp = 0.1f,
-                        System = "TEST",
-                        Message = file
-                    });
+
+                        decodedLine decodedLine = WpfApp1.ParseFile.ParseLine(previousLine, line);
+
+                        if (decodedLine.valid) {
+
+                            LogEntries.Add(new LogEntry
+                            {
+                                Timestamp = counter,
+                                System = decodedLine.duration,
+                                Message = decodedLine.decodedData
+                            });
+                            previousLine = line;
+                            counter++;
+                        }
+                    }                                        
                 }
             }
         }
@@ -123,10 +137,11 @@ namespace WpfApp1
 
 
             // add test data
+            /*
             new Thread(() =>
             {
                 long ticks = DateTime.Now.Ticks;
-                Random random = new Random();
+                //Random random = new Random();
 
                 for (int i = 0; i < 100; ++i)
                 {
@@ -143,7 +158,7 @@ namespace WpfApp1
                     //Thread.Sleep(random.Next() % 100 + 50);
                 }
             }).Start();
-
+            */
 
         }
 
