@@ -13,8 +13,19 @@ namespace WpfApp1
         public string decodedData;
     }
 
+    
     public class ParseFile
     {
+        public const string AUX_WR = "8";
+        public const string AUX_RD = "9";
+        public const string WR_STATUS_UPDATE_REQ = "2";
+        public const string WR_STATUS_UPDATE_REQ_MOT = "6";
+        public const string I2C_WR_MOT = "4";
+        public const string I2C_RD_MOT = "5";
+        public const string I2C_RD = "1";
+        public const string I2C_WR = "0";
+        public const string ACK = "0";
+
         public static decodedLine ParseLine(string previousLine, string line)
         {
             decodedLine values = new decodedLine();
@@ -36,6 +47,7 @@ namespace WpfApp1
                 }
             } catch(ArgumentOutOfRangeException)
             {
+                // if blank/empty line
                 values.valid = false;
                 return values;
             }
@@ -124,15 +136,106 @@ namespace WpfApp1
                     case "40":
                         values.decodedData = "I2C NACK";
                         break;
+                    default:
+                        values.decodedData = "ERROR: unknown";
+                        break;
                 }
                 values.valid = true;
                 return values;
             }
 
-
+        
+        string command = aux_data_string.Substring(0, 1);
+            switch(command)
+            {
+                case AUX_WR:
+                    values.decodedData = "AUX Write";
+                    break;
+                case AUX_RD:
+                    values.decodedData = "AUX Read";
+                    break;
+                case WR_STATUS_UPDATE_REQ:
+                    values.decodedData = "Write_Status_Update_Request";
+                    break;
+                case WR_STATUS_UPDATE_REQ_MOT:
+                    values.decodedData = "Write_Status_Update_Request(MOT)";
+                    break;
+                case I2C_WR_MOT:
+                    values.decodedData = "I2C Write(MOT)";
+                    break;
+                case I2C_RD_MOT:
+                    values.decodedData = "I2C Read(MOT)";
+                    break;
+                case I2C_RD:
+                    values.decodedData = "I2C Read";
+                    break;
+                case I2C_WR: // (0000 = I2C ACK) vs (0000: I2C Write) may confuse
+                    //values.decodedData = "I2C Write";
+                    break;
+            }
 
             values.valid = true;//debug
             return values;
+        }
+
+        public static bool IsI2CWrite(string line, string previousLine)
+        {
+            byte I2C7bitAddress = 0xFF; // make MSB!=1'b0 on purpose
+
+            // Example #1
+            //SYNC ► 0000|0000 ► 00000000 ► 0|1001000 ► STOP
+            //(Address - only transaction with MOT = 0 and I2C address)
+            // COMMAND | 0x00 | I2C address : Address-only request
+            // at least 3-byte
+
+            // Example #2
+            //SYNC ► 0000|0000 ► 00000000 ► 0|1001000 ► 0000|0011 ► Data0 ► Data1 ► Data2 ► Data3 ► STOP
+            //(MOT = 0, the same I2C address, Length = 4 bytes)
+
+            // if 1st, 2nd byte is not 0x0000, it is not I2C Write request
+            string I2CWRheader = "0000";
+            if (!I2CWRheader.Equals(line.Substring(0, 4))) {
+                return false;
+            }
+            try
+            {
+                I2C7bitAddress = Convert.ToByte(line.Substring(4, 2), 16);
+            } 
+            catch (ArgumentOutOfRangeException) // no 3rd byte(I2C address), return false
+            {
+                return false;
+            }
+            //pos 0 is least significant bit, pos 7 is most
+            // bool IsBitSet(byte b, int pos)
+            //{
+            //    return (b & (1 << pos)) != 0;
+            //}
+            // MSB shall be 0 for I2C 7-bit slave address
+            if ((I2C7bitAddress & (1 << 7)) != 0)
+            {
+                return false;
+            }
+
+            // if the last request is read
+            // the next one shall NOT be I2C write
+            string previousCommand = previousLine.Substring(0, 1);
+            if (previousCommand.Equals(AUX_RD) ||
+                previousCommand.Equals(I2C_RD_MOT) ||
+                previousCommand.Equals(I2C_RD))
+            {
+                return false;
+            }
+
+            // check I2C write length meet its payload
+            string lengthHexString = line.Substring(6, 2);
+            int length = Int32.Parse(lengthHexString, System.Globalization.NumberStyles.HexNumber);
+            length++;
+            if (line.Length.Equals((length*2 + 8)))
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }
