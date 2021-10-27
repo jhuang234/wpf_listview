@@ -24,7 +24,7 @@
                 <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Timestamp" Width="70" DisplayMemberBinding="{Binding Timestamp}"></GridViewColumn>
-                    <GridViewColumn Header="System" Width="70" DisplayMemberBinding="{Binding System}"></GridViewColumn>
+                    <GridViewColumn Header="Duration" Width="70" DisplayMemberBinding="{Binding System}"></GridViewColumn>
                     <GridViewColumn Header="Message" Width="440" DisplayMemberBinding="{Binding Message}"></GridViewColumn>
                 </GridView>
             </ListView.View>

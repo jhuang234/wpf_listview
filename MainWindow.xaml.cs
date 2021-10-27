@@ -108,9 +108,9 @@ namespace WpfApp1
                             LogEntries.Add(new LogEntry
                             {
                                 Timestamp = counter,
-                                System = decodedLine.duration,
+                                System = line,//decodedLine.duration,
                                 Message = decodedLine.decodedData
-                            });
+                            }); ;
                             previousLine = line;
                             counter++;
                         }

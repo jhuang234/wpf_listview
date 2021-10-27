@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace WpfApp1
@@ -9,6 +10,11 @@ namespace WpfApp1
     public struct decodedLine
     {
         public bool valid;
+        public int IsRequest; // request has command & address
+        public string command;
+        public string address;
+        public int length;
+        public string data;
         public string duration;
         public string decodedData;
     }
@@ -26,6 +32,18 @@ namespace WpfApp1
         public const string I2C_WR = "0";
         public const string ACK = "0";
 
+        public const int CMD_POSITION = 0;
+        public const int CMD_OFFSET = 1;
+        public const int ADDR_POSITION = 1;
+        public const int ADDR_OFFSET = 5;
+        public const int LENGTH_POSITION = 6;
+        public const int LENGTH_OFFSET = 2;
+        public const int DATA_POSITION = 8;
+        public const int ACK_POSITION = 0;
+        public const int ACK_OFFSET = 2;
+
+
+
         public static decodedLine ParseLine(string previousLine, string line)
         {
             decodedLine values = new decodedLine();
@@ -33,6 +51,13 @@ namespace WpfApp1
             string[] line_subs, prev_line_subs;
             string aux_data_string;
 
+            //==============================================================
+            // check line
+            // TODO: process too many comma in one line
+            // for example:
+            //  406833728:0040407141343:90040407144703:90020201
+            // Now we just skip
+            //==============================================================
             // format: timestamp:aux_data
             // i.e: 
             // 078605583:90020600
@@ -45,6 +70,12 @@ namespace WpfApp1
                     values.valid = false;
                     return values;
                 }
+                // if "E" found, it means decode error
+                if (line.Contains("E"))
+                {
+                    values.valid = false;
+                    return values;
+                }
             } catch(ArgumentOutOfRangeException)
             {
                 // if blank/empty line
@@ -52,9 +83,23 @@ namespace WpfApp1
                 return values;
             }
 
+
+
             prev_line_subs = previousLine.Split(':');
 
-            if (line.Contains(':'))
+            // not a valid line data without one comma,
+            // too many comma is invliad either
+            //if (line.Contains(':'))
+            int commaCount = 0;
+            foreach (char c in line)
+            {
+                if (c == ':')
+                {
+                    commaCount++;
+                }
+            }
+
+            if (commaCount == 1)
             {
                 line_subs = line.Split(':');
                 aux_data_string = line_subs[1];
@@ -64,7 +109,20 @@ namespace WpfApp1
                 return values;
             }
 
+            // not a valid line data without payload
+            // e.g., 
+            //235614222:90020201
+            //235614295:
+            //235617532:90020201
+            if(string.IsNullOrEmpty(aux_data_string))
+            {
+                values.valid = false;
+                return values;
+            }
 
+            //==============================================================
+            // check previous line
+            //==============================================================
             if (string.IsNullOrEmpty(previousLine))
             {
                 values.duration = "0.0";
@@ -75,24 +133,25 @@ namespace WpfApp1
                 {
                     previous_line_timestamp = int.Parse(prev_line_subs[0]);
                 }
-                catch (OverflowException e)
+                catch (OverflowException)
                 {
-                    Console.WriteLine(previousLine);
-                    Console.WriteLine(e.Message);
+                    previous_line_timestamp = 0;
                 }
 
                 try
                 {
                     curr_line_timestamp = int.Parse(line_subs[0]);                    
                 }
-                catch (OverflowException e)
+                catch (OverflowException)
                 {
-                    Console.WriteLine(line);
-                    Console.WriteLine(e.Message);
+                    curr_line_timestamp = 0;
                 }
                 values.duration = (curr_line_timestamp - previous_line_timestamp).ToString();
             }
 
+            //==============================================================
+            // decode line
+            //==============================================================
             // AUX header:
             // 1000: Native Write
             // 1001: Native Read
@@ -140,40 +199,123 @@ namespace WpfApp1
                         values.decodedData = "ERROR: unknown";
                         break;
                 }
+                values.address = "";
+                values.command = "";
+                values.IsRequest = 0;
                 values.valid = true;
                 return values;
             }
 
-        
-        string command = aux_data_string.Substring(0, 1);
-            switch(command)
+
+            values.IsRequest = -1; //it's to check (0000 = I2C ACK) or (0000: I2C Write)
+            string command = aux_data_string.Substring(CMD_POSITION, CMD_OFFSET);
+            string address = "";
+            string lengthHexString = "";
+            int length = 0;
+            try
             {
+                address = aux_data_string.Substring(ADDR_POSITION, ADDR_OFFSET);
+                lengthHexString = aux_data_string.Substring(LENGTH_POSITION, LENGTH_OFFSET);
+                length = Int32.Parse(lengthHexString, NumberStyles.HexNumber) + 1;
+            } 
+            catch(ArgumentOutOfRangeException)
+            {
+                // (0000 = I2C ACK) or (0000: I2C Write) confusion catched
+                // nothing
+            }
+
+            string reqData = "";
+
+            switch (command)
+            {
+                case I2C_WR:
+                    if (!IsI2CWrite(line, previousLine)) // ACK + Data ... 
+                    {
+                        values.IsRequest = 0;
+                        values.command = "";
+                        values.address = "";
+
+                        string rdData = aux_data_string.Substring(ACK_OFFSET);
+                        values.length = rdData.Length / 2;
+                        string rdDataSplitSpace = Regex.Replace(rdData, ".{2}", "$0 ");//insert space for each 2 char
+                        values.data = rdDataSplitSpace;
+                        values.decodedData = rdDataSplitSpace;
+                        values.valid = true;
+                        return values;
+                    } else
+                    {
+                        goto case I2C_RD;// same as the other request(s)
+                    }                    
                 case AUX_WR:
-                    values.decodedData = "AUX Write";
-                    break;
                 case AUX_RD:
-                    values.decodedData = "AUX Read";
-                    break;
                 case WR_STATUS_UPDATE_REQ:
-                    values.decodedData = "Write_Status_Update_Request";
-                    break;
                 case WR_STATUS_UPDATE_REQ_MOT:
-                    values.decodedData = "Write_Status_Update_Request(MOT)";
-                    break;
                 case I2C_WR_MOT:
-                    values.decodedData = "I2C Write(MOT)";
-                    break;
                 case I2C_RD_MOT:
-                    values.decodedData = "I2C Read(MOT)";
-                    break;
                 case I2C_RD:
-                    values.decodedData = "I2C Read";
+                    values.IsRequest = 1;
+                    values.command = command;
+                    values.address = address;
+                    values.length = length;
+
+                    // All request(s) shall have length, if NOT, this request may be broken..
+                    try
+                    {
+                        reqData = aux_data_string.Substring(LENGTH_POSITION + LENGTH_OFFSET);
+                    }
+                    catch
+                    {
+                        values.decodedData = "Error";
+                        values.valid = false;
+                        return values;
+                    }
+                    if (!string.IsNullOrEmpty(reqData))
+                    {
+                        string dataSplitSpace = Regex.Replace(reqData, ".{2}", "$0 ");//insert space for each 2 char
+                        values.data = dataSplitSpace;
+                        values.decodedData = dataSplitSpace;
+                        break;
+                    }
+                    values.data = "";
+                    values.decodedData = "";
                     break;
-                case I2C_WR: // (0000 = I2C ACK) vs (0000: I2C Write) may confuse
-                    //values.decodedData = "I2C Write";
+                default:
                     break;
             }
 
+            string printMsg = " Address:" + values.address + " Length:" + values.length + " Data:" + values.decodedData;
+
+            switch (command)
+            {
+                case AUX_WR:
+                    values.decodedData = "AUX Write" + printMsg;
+                    break;
+                case AUX_RD:
+                    values.decodedData = "AUX Read" + printMsg;
+                    break;
+                case WR_STATUS_UPDATE_REQ:
+                    values.decodedData = "Write_Status_Update_Request" + printMsg;
+                    break;
+                case WR_STATUS_UPDATE_REQ_MOT:
+                    values.decodedData = "Write_Status_Update_Request(MOT)" + printMsg;
+                    break;
+                case I2C_WR_MOT:
+                    values.decodedData = "I2C Write(MOT)" + printMsg;
+                    break;
+                case I2C_RD_MOT:
+                    values.decodedData = "I2C Read(MOT)" + printMsg;
+                    break;
+                case I2C_RD:
+                    values.decodedData = "I2C Read" + printMsg;
+                    break;
+                case I2C_WR: // (0000 = I2C ACK) shall be done in previous switch()
+                    values.decodedData = "I2C Write" + printMsg;
+                    break;
+            }
+            if (values.IsRequest == -1)
+            {
+                values.IsRequest = 1;
+            }
             values.valid = true;//debug
             return values;
         }
@@ -228,7 +370,7 @@ namespace WpfApp1
 
             // check I2C write length meet its payload
             string lengthHexString = line.Substring(6, 2);
-            int length = Int32.Parse(lengthHexString, System.Globalization.NumberStyles.HexNumber);
+            int length = Int32.Parse(lengthHexString, NumberStyles.HexNumber);
             length++;
             if (line.Length.Equals((length*2 + 8)))
             {
